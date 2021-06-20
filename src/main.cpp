@@ -119,12 +119,15 @@ void resetDistance()
   bool btn = digitalRead(PB4);
   if (!btn)
   {
-    if (distanceRstTime < millis())
+    if (millis() - distanceRstTime > 3000)
+    {
       distance = 0;
+      savedToEeprom = false;
+    }
   }
   else
   {
-    distanceRstTime = millis() + 3000;
+    distanceRstTime = millis();
   }
 }
 
