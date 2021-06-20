@@ -24,27 +24,45 @@ int input;
 unsigned long start, finished;
 unsigned long elapsed;
 unsigned long tempUpdated;
-unsigned int circMetric = 205; // wheel circumference (in centimeters)
+unsigned int circMetric = 206; // wheel circumference (in centimeters)
 unsigned int speedk;           // holds calculated speed vales in metric
 unsigned int distance = 0;
 unsigned int odometer = 0;
+unsigned long tripDriveTime = 0;
+float tripDriveAvgSpeed = 0.00f;
+unsigned long tripIdleTime = 0;
 unsigned long distanceRstTime;
+unsigned long screenRstTime;
+int screenSelector = 1;
+int scrensAvailable = 2;
 
 bool savedToEeprom = false;
+bool afterStartTemp = true;
 
 RTC_DS3231 rtc;
 
 void calcSpeed();
 void resetSpeed();
 void resetDistance();
+void calculateDriveTime();
+void calculateIdleTime();
 void displaySpeed();
 void displayTime();
 void displayTemp();
 void displayOdo();
 void displayTrip();
+void displayTripDriveTime();
+void displayTripDriveAvgSpeed();
+void displayTripIdleTime();
 void getDataFromEeprom();
 void writeDataToEeprom();
+// Available screens
+void mainScreen();
+void tripDataScreen();
+
 void changeView();
+void screenReset();
+void displayView();
 
 void setup()
 {
@@ -78,17 +96,14 @@ void setup()
 
 void loop()
 {
+  displayView();
 
-  displayTime();
-  displayTemp();
-  displaySpeed();
-  displayOdo();
-  displayTrip();
+  calculateDriveTime();
+  calculateIdleTime();
   writeDataToEeprom();
-
   resetDistance();
   resetSpeed();
-  delay(500);
+  delay(250);
 }
 
 void calcSpeed()
@@ -121,13 +136,30 @@ void resetDistance()
   {
     if (millis() - distanceRstTime > 3000)
     {
-      distance = 0;
+      distance = tripDriveTime = tripIdleTime = 0;
+      tripDriveAvgSpeed = 0.00f;
       savedToEeprom = false;
     }
   }
   else
   {
     distanceRstTime = millis();
+  }
+}
+
+void calculateDriveTime()
+{
+  if (speedk / 100 > 4)
+  {
+    tripDriveTime += 250;
+  }
+}
+
+void calculateIdleTime()
+{
+  if (speedk / 100 < 4)
+  {
+    tripIdleTime += 250;
   }
 }
 
@@ -150,22 +182,21 @@ void displaySpeed()
 void displayTime()
 {
   DateTime now = rtc.now();
-  String time = String(now.hour()) + ":" + String(now.minute());
   tft.setCursor(5, 5);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.print(time);
+  tft.printf("%02d:%02d", now.hour(), now.minute());
 }
 
 void displayTemp()
 {
-  if (millis() - tempUpdated > 5000)
+  if (millis() - tempUpdated > 5000 || afterStartTemp)
   {
     temp = String(bme.readTemperature(), 1);
-    tft.setCursor(230, 5);
+    tft.setCursor(220, 5);
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.print(temp);
-    tft.print("c");
+    tft.printf("%    dc", temp);
     tempUpdated = millis();
+    afterStartTemp = false;
   }
 }
 
@@ -199,6 +230,44 @@ void displayTrip()
   tft.printf("%03d", m100);
 }
 
+void displayTripDriveTime()
+{
+  unsigned long allSeconds = tripDriveTime / 1000;
+  int hour = allSeconds / 3600;
+  int secsRemaining = allSeconds % 3600;
+  int minute = secsRemaining / 60;
+  int second = secsRemaining % 60;
+
+  tft.setCursor(5, 5);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setTextFont(4);
+  tft.printf("Drivig time %02d:%02d:%02d", hour, minute, second);
+}
+
+void displayTripDriveAvgSpeed()
+{
+  float time = tripDriveTime / 3600000.0;
+  float avgSpeed = (distance / 100000.0) / time;
+  tft.setCursor(5, 45);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setTextFont(4);
+  tft.printf("Avg speed %.2f km/h", avgSpeed);
+}
+
+void displayTripIdleTime()
+{
+  unsigned long allSeconds = tripIdleTime / 1000;
+  int hour = allSeconds / 3600;
+  int secsRemaining = allSeconds % 3600;
+  int minute = secsRemaining / 60;
+  int second = secsRemaining % 60;
+
+  tft.setCursor(5, 85);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setTextFont(4);
+  tft.printf("Drivig time %02d:%02d:%02d", hour, minute, second);
+}
+
 void getDataFromEeprom()
 {
   EEPROM.get(addressOdo, odometer);
@@ -217,6 +286,53 @@ void writeDataToEeprom()
   }
 }
 
+void mainScreen()
+{
+  displayTime();
+  displayTemp();
+  displaySpeed();
+  displayOdo();
+  displayTrip();
+}
+
+void tripDataScreen()
+{
+
+  displayOdo();
+  displayTrip();
+}
+
 void changeView()
 {
+  screenSelector++;
+  if (screenSelector > scrensAvailable)
+    screenSelector = 1;
+  if (screenSelector < 1)
+    screenSelector = scrensAvailable;
+
+  displayView();
+}
+
+void screenReset()
+{
+  bool btn = digitalRead(PB5);
+  if (!btn)
+  {
+    if (millis() - screenRstTime > 3000)
+      screenSelector = 0;
+  }
+  else
+  {
+    screenRstTime = millis();
+  }
+}
+
+void displayView()
+{
+  if (screenSelector == 1)
+    mainScreen();
+  else if (screenSelector == 2)
+    tripDataScreen();
+
+  screenReset();
 }
