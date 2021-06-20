@@ -297,7 +297,9 @@ void mainScreen()
 
 void tripDataScreen()
 {
-
+  displayTripDriveTime();
+  displayTripDriveAvgSpeed();
+  displayTripIdleTime();
   displayOdo();
   displayTrip();
 }
