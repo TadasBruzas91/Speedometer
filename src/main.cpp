@@ -7,19 +7,24 @@
 #include <SPI.h>
 #include "Free_Fonts.h"
 #include "RTClib.h"
+#include "ms_to_time.h" // library convert ms to normal time
+
+#define HALL PB3
+#define TRIP_RESET PB4
+#define DISPLAY_CHANGE PB5
+#define SCREEN_UPDATE_TIME 250
 
 int addressOdo = 0;
-int addressTrip = 9;
+int addressTrip = 5;
+int addressTripDriveTime = 10;
+int addressTripAvgSpeed = 15;
+int addressTripIdleTime = 20;
 
 int screenRotation = 1;
 
 TFT_eSPI tft = TFT_eSPI(); // Invoke custom library
 
 Adafruit_BME280 bme;
-
-String temp;
-
-int input;
 
 unsigned long start, finished;
 unsigned long elapsed;
@@ -32,6 +37,7 @@ unsigned long tripDriveTime = 0;
 float tripDriveAvgSpeed = 0.00f;
 unsigned long tripIdleTime = 0;
 unsigned long distanceRstTime;
+unsigned long screenChangeTime;
 unsigned long screenRstTime;
 int screenSelector = 1;
 int scrensAvailable = 2;
@@ -88,10 +94,10 @@ void setup()
   getDataFromEeprom();
 
   // Set up pins
-  pinMode(PB3, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(PB3), calcSpeed, FALLING);
-  pinMode(PB4, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(PB5), changeView, FALLING);
+  pinMode(HALL, INPUT_PULLUP); // Hall sensor input
+  attachInterrupt(digitalPinToInterrupt(HALL), calcSpeed, FALLING);
+  pinMode(TRIP_RESET, INPUT_PULLUP);     // Trip reset button
+  pinMode(DISPLAY_CHANGE, INPUT_PULLUP); // Change view button
 }
 
 void loop()
@@ -103,12 +109,12 @@ void loop()
   writeDataToEeprom();
   resetDistance();
   resetSpeed();
-  delay(250);
+  delay(SCREEN_UPDATE_TIME);
 }
 
 void calcSpeed()
 {
-  bool x = digitalRead(PB3);
+  bool x = digitalRead(HALL);
   if (!x)
   {
     //calculate elapsed
@@ -131,7 +137,7 @@ void resetSpeed()
 
 void resetDistance()
 {
-  bool btn = digitalRead(PB4);
+  bool btn = digitalRead(TRIP_RESET);
   if (!btn)
   {
     if (millis() - distanceRstTime > 3000)
@@ -151,7 +157,7 @@ void calculateDriveTime()
 {
   if (speedk / 100 > 4)
   {
-    tripDriveTime += 250;
+    tripDriveTime += SCREEN_UPDATE_TIME;
   }
 }
 
@@ -159,7 +165,7 @@ void calculateIdleTime()
 {
   if (speedk / 100 < 4)
   {
-    tripIdleTime += 250;
+    tripIdleTime += SCREEN_UPDATE_TIME;
   }
 }
 
@@ -191,10 +197,11 @@ void displayTemp()
 {
   if (millis() - tempUpdated > 5000 || afterStartTemp)
   {
-    temp = String(bme.readTemperature(), 1);
-    tft.setCursor(220, 5);
+    String temp = String(bme.readTemperature(), 1);
+    tft.setCursor(230, 5);
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.printf("%    dc", temp);
+    tft.print(temp);
+    tft.print(" C");
     tempUpdated = millis();
     afterStartTemp = false;
   }
@@ -232,16 +239,13 @@ void displayTrip()
 
 void displayTripDriveTime()
 {
-  unsigned long allSeconds = tripDriveTime / 1000;
-  int hour = allSeconds / 3600;
-  int secsRemaining = allSeconds % 3600;
-  int minute = secsRemaining / 60;
-  int second = secsRemaining % 60;
+  MsConverter time(tripDriveTime);
 
   tft.setCursor(5, 5);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
   tft.setTextFont(4);
-  tft.printf("Drivig time %02d:%02d:%02d", hour, minute, second);
+  tft.print("Drive time ");
+  tft.print(time.getTimeString());
 }
 
 void displayTripDriveAvgSpeed()
@@ -251,27 +255,29 @@ void displayTripDriveAvgSpeed()
   tft.setCursor(5, 45);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
   tft.setTextFont(4);
-  tft.printf("Avg speed %.2f km/h", avgSpeed);
+  tft.print("Avg speed ");
+  tft.print(avgSpeed, 1);
+  tft.print(" km/h");
 }
 
 void displayTripIdleTime()
 {
-  unsigned long allSeconds = tripIdleTime / 1000;
-  int hour = allSeconds / 3600;
-  int secsRemaining = allSeconds % 3600;
-  int minute = secsRemaining / 60;
-  int second = secsRemaining % 60;
+  MsConverter time(tripIdleTime);
 
   tft.setCursor(5, 85);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
   tft.setTextFont(4);
-  tft.printf("Drivig time %02d:%02d:%02d", hour, minute, second);
+  tft.print("Idle time ");
+  tft.print(time.getTimeString());
 }
 
 void getDataFromEeprom()
 {
   EEPROM.get(addressOdo, odometer);
   EEPROM.get(addressTrip, distance);
+  EEPROM.get(addressTripDriveTime, tripDriveTime);
+  EEPROM.get(addressTripAvgSpeed, tripDriveAvgSpeed);
+  EEPROM.get(addressTripIdleTime, tripIdleTime);
 }
 
 void writeDataToEeprom()
@@ -282,6 +288,9 @@ void writeDataToEeprom()
   {
     EEPROM.put(addressOdo, odometer);
     EEPROM.put(addressTrip, distance);
+    EEPROM.put(addressTripDriveTime, tripDriveTime);
+    EEPROM.put(addressTripAvgSpeed, tripDriveAvgSpeed);
+    EEPROM.put(addressTripIdleTime, tripIdleTime);
     savedToEeprom = true;
   }
 }
@@ -306,28 +315,39 @@ void tripDataScreen()
 
 void changeView()
 {
-  screenSelector++;
-  if (screenSelector > scrensAvailable)
-    screenSelector = 1;
-  if (screenSelector < 1)
-    screenSelector = scrensAvailable;
-
-  displayView();
-}
-
-void screenReset()
-{
-  bool btn = digitalRead(PB5);
+  bool btn = digitalRead(DISPLAY_CHANGE);
   if (!btn)
   {
-    if (millis() - screenRstTime > 3000)
-      screenSelector = 0;
+    if (millis() - screenChangeTime > 1000)
+    {
+      screenSelector++;
+      if (screenSelector > scrensAvailable)
+        screenSelector = 1;
+      if (screenSelector < 1)
+        screenSelector = scrensAvailable;
+      screenChangeTime = millis();
+      displayView();
+    }
   }
   else
   {
-    screenRstTime = millis();
+    screenChangeTime = millis();
   }
 }
+
+// void screenReset()
+// {
+//   bool btn = digitalRead(DISPLAY_CHANGE);
+//   if (!btn)
+//   {
+//     if (millis() - screenRstTime > 3000)
+//       screenSelector = 0;
+//   }
+//   else
+//   {
+//     screenRstTime = millis();
+//   }
+// }
 
 void displayView()
 {
@@ -336,5 +356,5 @@ void displayView()
   else if (screenSelector == 2)
     tripDataScreen();
 
-  screenReset();
+  // screenReset();
 }
